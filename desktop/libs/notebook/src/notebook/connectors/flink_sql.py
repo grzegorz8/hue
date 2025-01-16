@@ -345,11 +345,12 @@ class FlinkSqlApi(Api):
 
   @query_error_handler
   def cancel(self, notebook, snippet):
+    LOG.info("Cancelling query.")
     session = self._get_session()
     operation_handle = snippet['result']['handle']['guid']
 
     try:
-      self.db.cancel(session['id'], operation_handle)
+      self.db.close_statement(session['id'], operation_handle)
     except Exception as e:
       message = force_unicode(str(e)).lower()
       LOG.debug(message)
@@ -515,12 +516,14 @@ class FlinkSqlClient():
     )
 
   def cancel(self, session_handle, operation_handle):
-    return self._root.delete(
-      'sessions/%(session_handle)s/operations/%(operation_handle)s/cancel' % {
-        'session_handle': session_handle,
-        'operation_handle': operation_handle,
-      }
+    p = 'sessions/%(session_handle)s/operations/%(operation_handle)s/cancel' % {'session_handle': session_handle,
+                                                                                'operation_handle': operation_handle, }
+    LOG.info(f"Run HTTP POST {p}")
+    result = self._root.post(
+      p
     )
+    LOG.info(f"HTTP POST result {result}")
+    return result
 
   def close_session(self, session_handle):
     return self._root.delete(
