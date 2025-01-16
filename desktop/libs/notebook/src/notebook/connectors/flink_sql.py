@@ -227,6 +227,10 @@ class FlinkSqlApi(Api):
             elif resp.get('status') == 'ERROR':
               status = 'error'
               self._remove_operation_token_info_from_user(statement_id)
+              result_resp = self.db.fetch_results(session['id'], statement_id, 0)
+              errors = result_resp['errors']
+              raise QueryError(errors[0])
+
           except Exception as e:
             if 'Can not find the submitted operation in the OperationManager with the %s' % statement_id in str(e):
               LOG.warning('Operation Handle: %s does not exist' % statement_id)
