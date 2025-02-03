@@ -20,9 +20,9 @@ from __future__ import absolute_import
 import logging
 import json
 import posixpath
+import re
 import sys
 import time
-from time import sleep
 
 from desktop.auth.backend import rewrite_user
 from desktop.lib.i18n import force_unicode
@@ -55,12 +55,21 @@ def query_error_handler(func):
       except:
         message = e.message
       message = force_unicode(message)
-      raise QueryError(message)
+      raise QueryError(parse_error(message))
     except Exception as e:
       message = force_unicode(str(e))
       raise QueryError(message)
   return decorator
 
+
+def parse_error(error):
+  lines = re.split(r'\\n', error)
+  caused_by = [line for line in lines if 'Caused by:' in line]
+
+  if len(caused_by) == 0:
+    return error
+  elif len(caused_by) >= 1:
+    return caused_by[-1]
 
 
 class FlinkSqlApi(Api):
@@ -229,8 +238,8 @@ class FlinkSqlApi(Api):
               status = 'error'
               self._remove_operation_token_info_from_user(statement_id)
               result_resp = self.db.fetch_results(session['id'], statement_id, 0)
-              errors = result_resp['errors']
-              raise QueryError(errors[0])
+              LOG.info(f"ERROR when checking status: '{result_resp}'")
+              raise QueryError(parse_error(result_resp['errors'][-1]))
 
           except Exception as e:
             if 'Can not find the submitted operation in the OperationManager with the %s' % statement_id in str(e):
@@ -297,13 +306,12 @@ class FlinkSqlApi(Api):
 
     return response
 
-
   @query_error_handler
   def get_sample_data(self, snippet, database=None, table=None, column=None, is_async=False, operation=None):
     if operation == 'hello':
       snippet['statement'] = "SELECT 'Hello World!'"
     else:
-      snippet['statement'] = "SELECT * FROM `%(database)s`.`%(table)s` LIMIT 100;" % {
+      snippet['statement'] = "SELECT * FROM `%(database)s`.`%(table)s` LIMIT 10;" % {
         'database': database,
         'table': table
       }
@@ -324,7 +332,7 @@ class FlinkSqlApi(Api):
     while resp['resultType'] != 'EOS':
       resp = self.db.fetch_results(session_id, statement_id, n)
       if resp['resultType'] == 'PAYLOAD':
-        n = n+1
+        n = n + 1
       sample += [db['fields'] for db in resp['results']['data'] if resp and resp['results'] and resp['results']['data']]
       time.sleep(1)
       if len(sample) > 0:
@@ -419,13 +427,12 @@ class FlinkSqlApi(Api):
 
     return [db[0] for db in db_list]
 
-
   def _show_tables(self, database):
     session = self._get_session()
     session_handle = session['id']
 
-    self.db.execute_statement(session_handle=session_handle, statement='USE %(database)s' % {'database': database})
-    operation_handle = self.db.execute_statement(session_handle=session_handle, statement='SHOW TABLES')
+    operation_handle = self.db.execute_statement(session_handle=session_handle,
+                                                 statement='SHOW TABLES IN %(database)s' % {'database': database})
     table_list = self._check_status_and_fetch_result(session_handle, operation_handle['operationHandle'])
 
     return [{
@@ -436,13 +443,13 @@ class FlinkSqlApi(Api):
       for table in table_list
     ]
 
-
-  def _get_columns(self, database, table):
+  def _get_columns(self, catalog, database, table):
     session = self._get_session()
     session_handle = session['id']
 
-    self.db.execute_statement(session_handle=session_handle, statement='USE %(database)s' % {'database': database})
-    operation_handle = self.db.execute_statement(session_handle=session_handle, statement='DESCRIBE %(table)s' % {'table': table})
+    operation_handle = self.db.execute_statement(
+      session_handle=session_handle,
+      statement='DESCRIBE `%(database)s`.`%(table)s`' % {'database': database, 'table': table})
     column_list = self._check_status_and_fetch_result(session_handle, operation_handle['operationHandle'])
 
     return [{
@@ -454,11 +461,11 @@ class FlinkSqlApi(Api):
     ]
 
 
-class FlinkSqlClient():
-  '''
+class FlinkSqlClient:
+  """
   Implements https://nightlies.apache.org/flink/flink-docs-master/docs/dev/table/sql-gateway/rest/.
   Could be a pip module or sqlalchemy dialect in the future.
-  '''
+  """
 
   def __init__(self, user, api_url):
     self.user = user
