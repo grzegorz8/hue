@@ -22,6 +22,7 @@ import json
 import posixpath
 import sys
 import time
+from time import sleep
 
 from desktop.auth.backend import rewrite_user
 from desktop.lib.i18n import force_unicode
@@ -302,20 +303,26 @@ class FlinkSqlApi(Api):
     if operation == 'hello':
       snippet['statement'] = "SELECT 'Hello World!'"
     else:
-      snippet['statement'] = "SELECT * FROM %(database)s.%(table)s LIMIT 100;" % {
+      snippet['statement'] = "SELECT * FROM `%(database)s`.`%(table)s` LIMIT 100;" % {
         'database': database,
         'table': table
       }
 
     session = self._get_session()
-    operation_handle = self.db.execute_statement(session_handle=session['id'], statement=snippet['statement'])
-    resp = self.db.fetch_results(session['id'], operation_handle['operationHandle'], 0)
+    session_id = session['id']
+    operation_handle = self.db.execute_statement(session_handle=session_id, statement=snippet['statement'])
+    statement_id = operation_handle['operationHandle']
+
+    resp = self.db.fetch_results(session_id, statement_id, 0)
+    while resp['resultType'] == 'NOT_READY':
+      time.sleep(0.1)
+      resp = self.db.fetch_results(session_id, statement_id, 0)
 
     sample = [db['fields'] for db in resp['results']['data'] if resp and resp['results'] and resp['results']['data']]
     n = 0
 
     while resp['resultType'] != 'EOS':
-      resp = self.db.fetch_results(session['id'], operation_handle['operationHandle'], n)
+      resp = self.db.fetch_results(session_id, statement_id, n)
       if resp['resultType'] == 'PAYLOAD':
         n = n+1
       sample += [db['fields'] for db in resp['results']['data'] if resp and resp['results'] and resp['results']['data']]
@@ -325,7 +332,7 @@ class FlinkSqlApi(Api):
 
     response = {
       'status': 0,
-      'result': {'handle': {'guid': operation_handle['operationHandle']}}
+      'result': {'handle': {'guid': statement_id}}
     }
     response['rows'] = sample
     response['full_headers'] = [
