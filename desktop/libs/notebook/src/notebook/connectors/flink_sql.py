@@ -238,7 +238,6 @@ class FlinkSqlApi(Api):
               raise e
 
     response['status'] = status
-    LOG.info(f"Check status? {status}")
     return response
 
 
@@ -261,8 +260,6 @@ class FlinkSqlApi(Api):
 
     if not bool(next_result):
       self._remove_operation_token_info_from_user(statement_id)  ## This will not be required if close_statement one will start working
-
-    LOG.info(f"HAS MORE? {bool(next_result)}")
 
     return {
       'has_more': bool(next_result),
@@ -345,9 +342,9 @@ class FlinkSqlApi(Api):
 
   @query_error_handler
   def cancel(self, notebook, snippet):
-    LOG.info("Cancelling query.")
     session = self._get_session()
     operation_handle = snippet['result']['handle']['guid']
+    LOG.debug(f"Cancelling query; operationHandle={operation_handle}.")
 
     try:
       self.db.close_statement(session['id'], operation_handle)
@@ -484,27 +481,28 @@ class FlinkSqlClient():
       "statement": statement,  # required
       "executionTimeout": ""  # execution time limit in milliseconds, optional, but required for stream SELECT ?
     }
+    json_data = json.dumps(data)
 
-    p = 'sessions/%(session_handle)s/statements' % {'session_handle': session_handle}
-    LOG.info(f"Run HTTP POST {p}\n{json.dumps(data)}")
-    result = self._root.post(p, data=json.dumps(data), contenttype=_JSON_CONTENT_TYPE)
-    LOG.info(f"HTTP POST result {result}")
+    path = 'sessions/%(session_handle)s/statements' % {'session_handle': session_handle}
+    LOG.debug(f"Executing statement. Running HTTP POST {path}\n{json_data}.")
+    result = self._root.post(path, data=json_data, contenttype=_JSON_CONTENT_TYPE)
+    LOG.debug(f"Statement execution completed. Response: {result}.")
     return result
 
   def fetch_status(self, session_handle, operation_handle):
-    p = 'sessions/%(session_handle)s/operations/%(operation_handle)s/status' % {'session_handle': session_handle,
-                                                                                'operation_handle': operation_handle}
-    LOG.info(f"Run HTTP GET {p}")
-    result = self._root.get(p)
-    LOG.info(f"HTTP GET result {result}")
+    path = 'sessions/%(session_handle)s/operations/%(operation_handle)s/status' % {'session_handle': session_handle,
+                                                                                   'operation_handle': operation_handle}
+    LOG.debug(f"Fetching status. Running Run HTTP GET {path}.")
+    result = self._root.get(path)
+    LOG.debug(f"Results status. Response: {result}.")
     return result
 
   def fetch_results(self, session_handle, operation_handle, token=0):
-    p = 'sessions/%(session_handle)s/operations/%(operation_handle)s/result/%(token)s' % {
+    path = 'sessions/%(session_handle)s/operations/%(operation_handle)s/result/%(token)s' % {
       'session_handle': session_handle, 'operation_handle': operation_handle, 'token': token}
-    LOG.info(f"Run HTTP GET {p}")
-    result = self._root.get(p)
-    LOG.info(f"HTTP GET result {result}")
+    LOG.debug(f"Fetching results. Running HTTP GET {path}.")
+    result = self._root.get(path)
+    LOG.debug(f"Results fetched. Response: {result}.")
     return result
 
   def close_statement(self, session_handle, operation_handle):
@@ -516,13 +514,11 @@ class FlinkSqlClient():
     )
 
   def cancel(self, session_handle, operation_handle):
-    p = 'sessions/%(session_handle)s/operations/%(operation_handle)s/cancel' % {'session_handle': session_handle,
-                                                                                'operation_handle': operation_handle, }
-    LOG.info(f"Run HTTP POST {p}")
-    result = self._root.post(
-      p
-    )
-    LOG.info(f"HTTP POST result {result}")
+    path = 'sessions/%(session_handle)s/operations/%(operation_handle)s/cancel' % {'session_handle': session_handle,
+                                                                                   'operation_handle': operation_handle}
+    LOG.debug(f"Cancelling operation. Running HTTP POST {path}.")
+    result = self._root.post(path)
+    LOG.debug(f"Operation cancelled. Response: {result}.")
     return result
 
   def close_session(self, session_handle):
