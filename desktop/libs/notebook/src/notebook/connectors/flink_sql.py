@@ -446,7 +446,7 @@ class FlinkSqlApi(Api):
       for table in table_list
     ]
 
-  def _get_columns(self, catalog, database, table):
+  def _get_columns(self, database, table):
     session = self._get_session()
     session_handle = session['id']
 
