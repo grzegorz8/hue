@@ -436,7 +436,7 @@ class FlinkSqlApi(Api):
     session_handle = session['id']
 
     operation_handle = self.db.execute_statement(session_handle=session_handle,
-                                                 statement='SHOW TABLES IN %(database)s' % {'database': database})
+                                                 statement='SHOW TABLES IN `%(database)s`' % {'database': database})
     table_list = self._check_status_and_fetch_result(session_handle, operation_handle['operationHandle'])
 
     return [{
