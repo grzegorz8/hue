@@ -260,7 +260,10 @@ class FlinkSqlApi(Api):
 
     resp = self.db.fetch_results(session['id'], operation_handle=statement_id, token=token)
 
-    next_result = resp.get('nextResultUri') if resp else None
+    if resp['resultType'] == 'EOS':
+      next_result = None
+    else:
+      next_result = resp.get('nextResultUri') if resp else None
 
     if next_result:
       n = int(next_result.rsplit('/', 1)[-1])
