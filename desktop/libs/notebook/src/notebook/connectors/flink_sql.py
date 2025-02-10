@@ -17,30 +17,22 @@
 
 from __future__ import absolute_import
 
-import logging
 import json
+import logging
 import posixpath
 import re
-import sys
 import time
 
 from desktop.auth.backend import rewrite_user
 from desktop.lib.i18n import force_unicode
 from desktop.lib.rest.http_client import HttpClient, RestException
 from desktop.lib.rest.resource import Resource
-
 from notebook.connectors.base import Api, QueryError
-
-if sys.version_info[0] > 2:
-  from django.utils.translation import gettext as _
-else:
-  from django.utils.translation import ugettext as _
-
 
 LOG = logging.getLogger()
 
 _JSON_CONTENT_TYPE = 'application/json'
-_API_VERSION = 'v1'
+_API_VERSION = 'v3'
 SESSION_KEY = '%(username)s-%(connector_name)s'
 OPERATION_TOKEN = '%(username)s-%(connector_name)s' + '-operation-token'
 
@@ -59,6 +51,7 @@ def query_error_handler(func):
     except Exception as e:
       message = force_unicode(str(e))
       raise QueryError(message)
+
   return decorator
 
 
@@ -82,7 +75,6 @@ class FlinkSqlApi(Api):
 
     self.db = FlinkSqlClient(user=user, api_url=api_url)
 
-
   @query_error_handler
   def create_session(self, lang=None, properties=None):
     session = self._get_session()
@@ -91,16 +83,13 @@ class FlinkSqlApi(Api):
       'type': lang,
       'id': session['sessionHandle']
     }
-
     return response
-
 
   def _get_session_key(self):
     return SESSION_KEY % {
       'username': self.user.username if hasattr(self.user, 'username') else self.user,
       'connector_name': self.interpreter['name']
     }
-
 
   def _get_session_info_from_user(self):
     self.user = rewrite_user(self.user)
@@ -109,14 +98,12 @@ class FlinkSqlApi(Api):
     if self.user.profile.data.get(session_key):
       return self.user.profile.data[session_key]
 
-
   def _set_session_info_to_user(self, session_info):
     self.user = rewrite_user(self.user)
     session_key = self._get_session_key()
 
     self.user.profile.update_data({session_key: session_info})
     self.user.profile.save()
-
 
   def _remove_session_info_from_user(self):
     self.user = rewrite_user(self.user)
@@ -131,13 +118,11 @@ class FlinkSqlApi(Api):
 
     self.user.profile.save()
 
-
   def _get_operation_token_key(self):
     return OPERATION_TOKEN % {
       'username': self.user.username if hasattr(self.user, 'username') else self.user,
       'connector_name': self.interpreter['name']
     }
-
 
   def _get_operation_token_info_from_user(self, operation_handle):
     self.user = rewrite_user(self.user)
@@ -145,7 +130,6 @@ class FlinkSqlApi(Api):
 
     if self.user.profile.data.get(operation_token_key):
       return self.user.profile.data[operation_token_key][operation_handle]
-
 
   def _set_operation_token_info_to_user(self, operation_handle, token):
     self.user = rewrite_user(self.user)
@@ -161,7 +145,6 @@ class FlinkSqlApi(Api):
 
     self.user.profile.save()
 
-
   def _remove_operation_token_info_from_user(self, operation_handle):
     self.user = rewrite_user(self.user)
     operation_token_key = self._get_operation_token_key()
@@ -172,7 +155,6 @@ class FlinkSqlApi(Api):
       self.user.profile.json_data = json.dumps(json_data)
 
     self.user.profile.save()
-
 
   def _get_session(self):
     session = self._get_session_info_from_user()
@@ -194,7 +176,6 @@ class FlinkSqlApi(Api):
 
     return session
 
-
   @query_error_handler
   def execute(self, notebook, snippet):
     session = self._get_session()
@@ -209,7 +190,6 @@ class FlinkSqlApi(Api):
       'has_result_set': True,
       'guid': operation_handle['operationHandle'],
     }
-
 
   @query_error_handler
   def check_status(self, notebook, snippet):
@@ -238,7 +218,6 @@ class FlinkSqlApi(Api):
               status = 'error'
               self._remove_operation_token_info_from_user(statement_id)
               result_resp = self.db.fetch_results(session['id'], statement_id, 0)
-              LOG.info(f"ERROR when checking status: '{result_resp}'")
               raise QueryError(parse_error(result_resp['errors'][-1]))
 
           except Exception as e:
@@ -250,7 +229,6 @@ class FlinkSqlApi(Api):
     response['status'] = status
     return response
 
-
   @query_error_handler
   def fetch_result(self, notebook, snippet, rows, start_over):
     session = self._get_session()
@@ -258,6 +236,7 @@ class FlinkSqlApi(Api):
 
     token = self._get_operation_token_info_from_user(statement_id)
 
+    # Is race condition between cancel and fetch possible?
     resp = self.db.fetch_results(session['id'], operation_handle=statement_id, token=token)
 
     if resp['resultType'] == 'EOS':
@@ -266,13 +245,19 @@ class FlinkSqlApi(Api):
       next_result = resp.get('nextResultUri') if resp else None
 
     if next_result:
-      n = int(next_result.rsplit('/', 1)[-1])
+      # nextResultUri format:
+      #   /sessions/:session_handle/operations/:operation_handle/result/:token?rowFormat=JSON
+      # Step 1: Drop URL query part ("?rowFormat=JSON")
+      url_path = next_result.rsplit('?', 1)[0]
+      # Step 2: Extract "token" from URL path
+      n = int(url_path.rsplit('/', 1)[-1])
       self._set_operation_token_info_to_user(statement_id, n)
 
     data = [db['fields'] for db in resp['results']['data'] if resp and resp['results'] and resp['results']['data']]
 
     if not bool(next_result):
-      self._remove_operation_token_info_from_user(statement_id)  ## This will not be required if close_statement one will start working
+      # This will not be required if close_statement one will start working
+      self._remove_operation_token_info_from_user(statement_id)
 
     return {
       'has_more': bool(next_result),
@@ -287,13 +272,14 @@ class FlinkSqlApi(Api):
       'type': 'table'
     }
 
-
   @query_error_handler
   def autocomplete(self, snippet, database=None, table=None, column=None, nested=None, operation=None):
     LOG.debug(f"Autocomplete: '{database}'; '{table}'; '{column}'; '{nested}', '{operation}'.")
     response = {}
 
-    if database is None:
+    if operation == 'functions':
+      response['functions'] = self._show_functions(database)
+    elif database is None:
       response['databases'] = self._show_databases()
     elif table is None:
       response['tables_meta'] = self._show_tables(database)
@@ -315,7 +301,7 @@ class FlinkSqlApi(Api):
     if operation == 'hello':
       snippet['statement'] = "SELECT 'Hello World!'"
     else:
-      snippet['statement'] = "SELECT * FROM `%(database)s`.`%(table)s` LIMIT 10;" % {
+      snippet['statement'] = "SELECT * FROM `%(database)s`.`%(table)s` LIMIT 25;" % {
         'database': database,
         'table': table
       }
@@ -342,28 +328,28 @@ class FlinkSqlApi(Api):
       if len(sample) > 0:
         break
 
-    response = {
+    return {
       'status': 0,
-      'result': {'handle': {'guid': statement_id}}
+      'result': {
+        'handle': {
+          'guid': statement_id
+        }
+      },
+      'rows': sample,
+      'full_headers': [
+        {
+          'name': column['name'],
+          'type': column['logicalType']['type'],
+          'comment': column['comment']
+        }
+        for column in resp['results']['columns'] if resp
+      ]
     }
-    response['rows'] = sample
-    response['full_headers'] = [
-      {
-        'name': column['name'],
-        'type': column['logicalType']['type'],
-        'comment': column['comment']
-      }
-      for column in resp['results']['columns'] if resp
-    ]
-
-    return response
-
 
   @query_error_handler
   def cancel(self, notebook, snippet):
     session = self._get_session()
     operation_handle = snippet['result']['handle']['guid']
-    LOG.debug(f"Cancelling query; operationHandle={operation_handle}.")
 
     try:
       self.db.close_statement(session['id'], operation_handle)
@@ -383,7 +369,7 @@ class FlinkSqlApi(Api):
         self.db.close_statement(session_handle=session['id'], operation_handle=statement_id)
         # self._remove_operation_token_info_from_user(statement_id)     ## Needs to check why Hue db not getting updated
       else:
-        return {'status': -1} # missing operation ids
+        return {'status': -1}  # missing operation ids
     except Exception as e:
       if 'does not exist in current session:' in str(e):
         return {'status': -1}  # skipped
@@ -392,25 +378,18 @@ class FlinkSqlApi(Api):
 
     return {'status': 0}
 
-
   def close_session(self, session):
-    # Avoid closing session on page refresh or editor close for now
-    pass
+    # Needs verification
+    adssdsd = self._get_session_info_from_user
+    LOG.info(f"Closing session '{adssdsd}'.")
+    if adssdsd():
+      self._remove_session_info_from_user()
+      self.db.close_session(session['id'])
 
-    # response = {
-    #   'status': 0,
-    #   'session': session['id']
-    # }
-
-    # stored_session = self._get_session_info_from_user()
-    # if stored_session and session['id'] == stored_session['id']:
-    #   self.db.close_session(session['id'])
-    #   self._remove_session_info_from_user()
-    # else:
-    #   return {'status': -1}
-
-    # return response
-
+    return {
+      'status': 0,
+      'session': session['id']
+    }
 
   def _check_status_and_fetch_result(self, session_handle, operation_handle):
     resp = self.db.fetch_results(session_handle, operation_handle, 0)
@@ -420,7 +399,6 @@ class FlinkSqlApi(Api):
 
     data = [i['fields'] for i in resp['results']['data'] if resp and resp['results'] and resp['results']['data']]
     return data
-
 
   def _show_databases(self):
     session = self._get_session()
@@ -464,6 +442,17 @@ class FlinkSqlApi(Api):
       for col in column_list
     ]
 
+  def _show_functions(self, database):
+    session = self._get_session()
+    session_handle = session['id']
+
+    operation_handle = self.db.execute_statement(
+      session_handle=session_handle,
+      statement='SHOW FUNCTIONS IN `%(database)s`' % {'database': database})
+    function_list = self._check_status_and_fetch_result(session_handle, operation_handle['operationHandle'])
+
+    return [{'name': function[0]} for function in function_list]
+
 
 class FlinkSqlClient:
   """
@@ -488,40 +477,41 @@ class FlinkSqlClient:
       "sessionName": self.user.username + "-flink-sql",
     }
     data.update(properties)
-
     return self._root.post('sessions', data=json.dumps(data), contenttype=_JSON_CONTENT_TYPE)
+
+  def close_session(self, session_handle):
+    return self._root.delete('sessions/%(session_handle)s' % {'session_handle': session_handle})
+
+  def get_session_conf(self, session_handle):
+    return self._root.get('sessions/%(session_handle)s' % {'session_handle': session_handle})
 
   def session_heartbeat(self, session_handle):
     return self._root.post('sessions/%(session_handle)s/heartbeat' % {'session_handle': session_handle})
 
   def execute_statement(self, session_handle, statement):
     data = {
-      "statement": statement,  # required
-      "executionTimeout": ""  # execution time limit in milliseconds, optional, but required for stream SELECT ?
+      "statement": statement,
     }
     json_data = json.dumps(data)
 
     path = 'sessions/%(session_handle)s/statements' % {'session_handle': session_handle}
-    LOG.debug(f"Executing statement. Running HTTP POST {path}\n{json_data}.")
-    result = self._root.post(path, data=json_data, contenttype=_JSON_CONTENT_TYPE)
-    LOG.debug(f"Statement execution completed. Response: {result}.")
-    return result
+    return self._root.post(path, data=json_data, contenttype=_JSON_CONTENT_TYPE)
 
   def fetch_status(self, session_handle, operation_handle):
-    path = 'sessions/%(session_handle)s/operations/%(operation_handle)s/status' % {'session_handle': session_handle,
-                                                                                   'operation_handle': operation_handle}
-    LOG.debug(f"Fetching status. Running Run HTTP GET {path}.")
-    result = self._root.get(path)
-    LOG.debug(f"Results status. Response: {result}.")
-    return result
+    return self._root.get(
+      'sessions/%(session_handle)s/operations/%(operation_handle)s/status' % {
+        'session_handle': session_handle,
+        'operation_handle': operation_handle,
+      }
+    )
 
   def fetch_results(self, session_handle, operation_handle, token=0):
-    path = 'sessions/%(session_handle)s/operations/%(operation_handle)s/result/%(token)s' % {
-      'session_handle': session_handle, 'operation_handle': operation_handle, 'token': token}
-    LOG.debug(f"Fetching results. Running HTTP GET {path}.")
-    result = self._root.get(path)
-    LOG.debug(f"Results fetched. Response: {result}.")
-    return result
+    return self._root.get(
+      'sessions/%(session_handle)s/operations/%(operation_handle)s/result/%(token)s' % {
+        'session_handle': session_handle,
+        'operation_handle': operation_handle,
+        'token': token
+      })
 
   def close_statement(self, session_handle, operation_handle):
     return self._root.delete(
@@ -532,23 +522,9 @@ class FlinkSqlClient:
     )
 
   def cancel(self, session_handle, operation_handle):
-    path = 'sessions/%(session_handle)s/operations/%(operation_handle)s/cancel' % {'session_handle': session_handle,
-                                                                                   'operation_handle': operation_handle}
-    LOG.debug(f"Cancelling operation. Running HTTP POST {path}.")
-    result = self._root.post(path)
-    LOG.debug(f"Operation cancelled. Response: {result}.")
-    return result
-
-  def close_session(self, session_handle):
-    return self._root.delete(
-      'sessions/%(session_handle)s' % {
+    return self._root.post(
+      'sessions/%(session_handle)s/operations/%(operation_handle)s/cancel' % {
         'session_handle': session_handle,
-      }
-    )
-
-  def get_session_conf(self, session_handle):
-    return self._root.get(
-      'sessions/%(session_handle)s' % {
-        'session_handle': session_handle,
+        'operation_handle': operation_handle
       }
     )
