@@ -183,6 +183,8 @@ class FlinkSqlApi(Api):
 
     statement = snippet['statement'].strip().rstrip(';')
 
+    # TODO: Operations such as add, alter, create, drop, use, load, unload can be executed using simple path via
+    # /sessions/:session_handle/configure-session
     operation_handle = self.db.execute_statement(session_handle=session_handle, statement=statement)
     self._set_operation_token_info_to_user(operation_handle['operationHandle'], 0)
 
@@ -190,6 +192,9 @@ class FlinkSqlApi(Api):
       'has_result_set': True,
       'guid': operation_handle['operationHandle'],
     }
+
+  def _is_sync_statement(self, statement):
+    return bool(re.match(r'^(add|alter|create|drop|load|unload|use)\b', statement, re.IGNORECASE))
 
   @query_error_handler
   def check_status(self, notebook, snippet):
@@ -484,6 +489,15 @@ class FlinkSqlClient:
 
   def session_heartbeat(self, session_handle):
     return self._root.post('sessions/%(session_handle)s/heartbeat' % {'session_handle': session_handle})
+
+  def configure_session(self, session_handle, statement):
+    data = {
+      "statement": statement,
+    }
+    json_data = json.dumps(data)
+
+    path = 'sessions/%(session_handle)s/configure-session' % {'session_handle': session_handle}
+    self._root.post(path, data=json_data, contenttype=_JSON_CONTENT_TYPE)
 
   def execute_statement(self, session_handle, statement):
     data = {
