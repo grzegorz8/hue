@@ -379,10 +379,7 @@ class FlinkSqlApi(Api):
     return {'status': 0}
 
   def close_session(self, session):
-    # Needs verification
-    adssdsd = self._get_session_info_from_user
-    LOG.info(f"Closing session '{adssdsd}'.")
-    if adssdsd():
+    if self._get_session_info_from_user():
       self._remove_session_info_from_user()
       self.db.close_session(session['id'])
 
