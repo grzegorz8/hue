@@ -35,6 +35,8 @@ _JSON_CONTENT_TYPE = 'application/json'
 _API_VERSION = 'v3'
 SESSION_KEY = '%(username)s-%(connector_name)s'
 OPERATION_TOKEN = '%(username)s-%(connector_name)s' + '-operation-token'
+DEFAULT_CATALOG_PARAM = "default_catalog"
+DEFAULT_DATABASE_PARAM = "default_database"
 
 
 def query_error_handler(func):
@@ -72,6 +74,8 @@ class FlinkSqlApi(Api):
 
     self.options = interpreter['options']
     api_url = self.options['url']
+    self.default_catalog = self.options[DEFAULT_CATALOG_PARAM] if DEFAULT_CATALOG_PARAM in self.options else None
+    self.default_database = self.options[DEFAULT_DATABASE_PARAM] if DEFAULT_DATABASE_PARAM in self.options else None
 
     self.db = FlinkSqlClient(user=user, api_url=api_url)
 
@@ -79,9 +83,14 @@ class FlinkSqlApi(Api):
   def create_session(self, lang=None, properties=None):
     session = self._get_session()
 
+    if self.default_database:
+      self._use_database(self.default_catalog, self.default_database)
+    elif self.default_catalog:
+      self._use_catalog(self.default_catalog)
+
     response = {
       'type': lang,
-      'id': session['sessionHandle']
+      'id': session['id']
     }
     return response
 
@@ -401,6 +410,20 @@ class FlinkSqlApi(Api):
 
     data = [i['fields'] for i in resp['results']['data'] if resp and resp['results'] and resp['results']['data']]
     return data
+
+  def _use_catalog(self, catalog):
+    session = self._get_session()
+    self.db.configure_session(session_handle=(session['id']), statement="USE CATALOG `%s`" % catalog)
+
+  def _use_database(self, catalog, database):
+    session = self._get_session()
+    if catalog and database:
+      self.db.configure_session(session_handle=(session['id']),
+                                statement="USE `%(catalog)s`.`%(database)s`" % {'catalog': catalog,
+                                                                                'database': database})
+    else:
+      self.db.configure_session(session_handle=(session['id']),
+                                statement="USE `%(database)s`" % {'database': database})
 
   def _show_databases(self):
     session = self._get_session()
