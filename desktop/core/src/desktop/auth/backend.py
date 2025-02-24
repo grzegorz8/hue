@@ -815,6 +815,8 @@ class OIDCBackend(OIDCAuthenticationBackend):
 
     reverse_url = import_from_settings('OIDC_AUTHENTICATION_CALLBACK_URL', 'oidc_authentication_callback')
 
+    LOG.info(f"Building token_payload; reverse_url='{reverse_url}'; reverse(reverse_url)='{reverse(reverse_url)}'; "
+             f"request='{self.request}'; redirect_uri='{absolutify(self.request,reverse(reverse_url))}'")
     token_payload = {
       'client_id': self.OIDC_RP_CLIENT_ID,
       'client_secret': self.OIDC_RP_CLIENT_SECRET,
@@ -823,7 +825,7 @@ class OIDCBackend(OIDCAuthenticationBackend):
       'redirect_uri': absolutify(
         self.request,
         reverse(reverse_url)
-      ),
+      ).replace('http:', 'https:'),
     }
 
     # Get the token
